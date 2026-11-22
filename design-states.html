@@ -63,6 +63,11 @@ html,body{margin:0;background:var(--paper);color:var(--ink);font:17px/1.55 var(-
 html.dark.map-v{background:#0E0E0D}
 html.dark.map-v body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .05 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),linear-gradient(180deg,#0E0E0D 0%,#0E0E0D 32%,#111110 62%,#161615 100%)}   /* a fixed layer, not background-attachment:fixed on <html>: Safari stopped repainting the scroll after that was switched on by route (maps "not scrolling" until reload). Straight top-to-bottom (the radial glow banded into rings); a faint fine noise on top dithers the steps away */
 html.dark.map-v body{background:transparent}
+/* iPhone Safari: while its toolbar slides away the screen grows before fixed layers catch up, and the strip in between showed
+   the near-black page under the lighter gradient bottom (a black band flashing at the bottom). The gradient layer is as tall as
+   the largest viewport, so there is nothing to uncover. lvh = vh on computers */
+@supports (height:100lvh){html.dark.map-v body::before{bottom:auto;height:100lvh}}
+html{-webkit-tap-highlight-color:transparent}   /* no blue / grey tap flash on iPhone and Android: presses have their own feedback */
 html.dark.map-v .vign{display:none}   /* its flat-black edge fades would show as stripes on the gradient */
 body{padding:0 max(20px,env(safe-area-inset-right,0px)) 96px max(20px,env(safe-area-inset-left,0px));overflow-x:clip}
 a{color:inherit}
@@ -660,6 +665,7 @@ html.snap .totop{left:auto;right:max(20px,env(safe-area-inset-right,0px))}
   .sheet{inset:var(--hdr) 0 0 0;width:auto;z-index:35;border:0;transform:translateY(100%);transition:transform .45s var(--ease)}
   .sheet-in{padding:18px max(20px,env(safe-area-inset-right,0px)) 90px}
   .sheet.open{transform:none}
+  .sheet:not(.open){visibility:hidden;transition:transform .45s var(--ease),visibility 0s linear .45s}   /* folded away below the screen: it could peek up while Safari's toolbar moves */
   .sheet-toggle{display:inline-flex;position:fixed;right:20px;bottom:calc(20px + env(safe-area-inset-bottom,0px));z-index:36}
 }
 
@@ -1096,6 +1102,24 @@ dialog.closing::backdrop{animation:fadeOut .24s cubic-bezier(.4,0,.2,1) forwards
   .stackmap .cl:not(:has(>.pl.q[data-q="2"].drawn.seen))>.mcon [data-q="2"],.stackmap .cl:not(:has(>.pl.q[data-q="2"].drawn.seen))>.mcon [data-q="2"]+.mfl,
   .stackmap .cl:not(:has(>.pl.q[data-q="3"].drawn.seen))>.mcon [data-q="3"],.stackmap .cl:not(:has(>.pl.q[data-q="3"].drawn.seen))>.mcon [data-q="3"]+.mfl,
   .stackmap .cl:not(:has(>.pl.q[data-q="4"].drawn.seen))>.mcon [data-q="4"],.stackmap .cl:not(:has(>.pl.q[data-q="4"].drawn.seen))>.mcon [data-q="4"]+.mfl{opacity:0}
+  /* About: one swipe = one slide (mandatory snap, never past the next one); the text slides scale their type to the screen so
+     they fit it, otherwise a slide taller than the screen could only be paged through */
+  html.snap{scroll-snap-type:y mandatory}
+  html.snap .sl{scroll-snap-stop:always}
+  #v-about .s-why h2,#v-about .s-score h2,#v-about .s-author .au-h,#v-about .s-author h2{font-size:clamp(22px,4.4svh,30px)}
+  #v-about .s-why{padding-right:16px;padding-top:clamp(12px,2.4svh,48px);padding-bottom:clamp(12px,2.4svh,48px)}   /* the slide number sits in the 20px gutter */
+  #v-about .s-why .sl-txt{font-size:clamp(12.5px,min(2.02svh,3.7vw),16px);line-height:1.42;margin-top:clamp(8px,1.6svh,20px)}
+  #v-about .s-why .sl-txt p+p{margin-top:.75em}
+  #v-about .s-score .ssteps{margin-top:clamp(14px,3svh,32px);gap:clamp(10px,2.2svh,22px)}
+  #v-about .s-score .ssteps b{font-size:clamp(26px,5svh,40px);margin-bottom:clamp(4px,1svh,10px)}
+  #v-about .s-score .ssteps h3{font-size:clamp(15px,2.6svh,19px);margin-bottom:4px}
+  #v-about .s-score .ssteps p{font-size:clamp(13px,2.3svh,17px)}
+  #v-about .s-author .sl-txt{font-size:clamp(12.5px,2.2svh,17px);line-height:1.45}
+  #v-about .s-author .sl-txt p+p{margin-top:.7em}
+  #v-about .s-author .soc,#v-about .coffee{margin-top:clamp(10px,2.2svh,26px)}
+  /* the tube slide: only the vertical photo (2026-11-22, owner), as large as the screen allows */
+  #v-about.about.ss .s-tube>.sl-img .pic:last-child{display:none}
+  #v-about.about.ss .s-tube>.sl-img .pic img{width:auto;max-width:100%;max-height:calc(100svh - var(--hdr) - 2*clamp(22px,4svh,48px));margin:0 auto}
   /* About: photos as wide as the column (the same 20px on both sides), whole, never cropped */
   #v-about.about.ss .sl>.sl-img{position:relative;left:auto;transform:none;display:block;width:calc(100% + 34px);max-width:none;height:auto;overflow:visible}
   #v-about.about.ss .sl>.sl-img .pic{display:block;width:100%;height:auto;flex:none;margin:0}
