@@ -3140,11 +3140,13 @@ function cylNow(){}
     const q=Math.abs(d)/4.000244140625;return d!==0&&!Number.isInteger(d)&&Math.abs(q-Math.round(q))<1e-4};
   const dist=e=>{if(e.deltaMode===1)return e.deltaY*40;if(e.deltaMode===2)return e.deltaY*innerHeight;
     if(e.wheelDeltaY&&Math.abs(e.wheelDeltaY)>=60)return -e.wheelDeltaY*(100/120);return Math.abs(e.deltaY)<20?e.deltaY*25:e.deltaY};
-  const loop=now=>{raf=0;if(tgt===null)return;if(setY!==null&&Math.abs(scrollY-setY)>2){tgt=null;return}   /* something else scrolled: it wins */
+  const held=()=>rt.classList.contains("tour-lock");   /* the tutorial owns the scroll: no new glide, and one still running stops */
+  const loop=now=>{raf=0;if(tgt===null)return;if(held()){tgt=null;setY=null;last=0;return}if(setY!==null&&Math.abs(scrollY-setY)>2){tgt=null;return}   /* something else scrolled: it wins */
     const dt=Math.min(50,now-(last||now-16.7));last=now;const k=1-Math.pow(1-.22,dt/16.7);let y=scrollY+(tgt-scrollY)*k;
     const done=Math.abs(tgt-y)<.5;if(done)y=tgt;scrollTo({top:y,behavior:"instant"});setY=scrollY;
     if(done){tgt=null;setY=null;last=0}else raf=requestAnimationFrame(loop)};
-  const onWheel=e=>{if(cur.view!=="phase"||e.ctrlKey||RM||Math.abs(e.deltaX)>Math.abs(e.deltaY)||!e.deltaY)return;
+  const onWheel=e=>{if(held()){tgt=null;return}   /* scrollLock() swallows the wheel */
+    if(cur.view!=="phase"||e.ctrlKey||RM||Math.abs(e.deltaX)>Math.abs(e.deltaY)||!e.deltaY)return;
     if(e.target instanceof Element&&e.target.closest(".sheet-in,.ppanel,dialog"))return;if(!isMouse(e)){tgt=null;return}
     e.preventDefault();const m=rt.scrollHeight-innerHeight;
     if(tgt===null||Math.sign(dist(e))!==Math.sign(tgt-scrollY))tgt=scrollY;
