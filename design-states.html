@@ -1371,6 +1371,7 @@ const CONFIG={
   analytics:null,          // "goatcounter" (cookieless) | null. Its script is loaded only when this is set.
   goatcounter:"",          // e.g. "https://yourcode.goatcounter.com/count" (GoatCounter → Settings → Site code)
   feedbackEndpoint:"https://script.google.com/macros/s/AKfycbznW82aQmoGfN5P0thxFDOhMrPrp-F6APbseK9Vz8BCHTKN-NHkbm9kowNg-jlTuiwS2g/exec",   // the owner's Google Sheet collector (collector/Code.gs), or a Formspree URL. null = feedback UI hidden.
+  countHost:"design-states.lukijanishen.com",   // anonymous visit totals (collector/Code.gs "Visits") are counted only on this host. "" = counter off.
   donateUrl:"https://ko-fi.com/lukijanishen",          // "Buy the author a coffee" link (Ko-fi / Buy Me a Coffee / PayPal.me). Until set, the button only shows in the dev preview.
   contactEmail:"hello@lukijanishen.com",
   version:"4.0-design"
@@ -1422,12 +1423,51 @@ const INTRO_STYLE="slide";   /* first-visit intro: "slide" (big sentence-case ti
 /* ---------- analytics: anonymous event counts only, never content ---------- */
 function track(name,props){
   try{
+    if(COUNT_LIVE){if(COUNT_STEP[name]){if(!cur.preview)countStep(COUNT_STEP[name])}else if(countMark().seen.length)countStep()}
     if(CONFIG.analytics==="plausible"&&window.plausible)window.plausible(name,{props});
     else if(CONFIG.analytics==="umami"&&window.umami)window.umami.track(name,props);
     else if(ANALYTICS_ON&&window.goatcounter&&window.goatcounter.count)window.goatcounter.count({path:"event/"+name,title:name,event:true});
   }catch(e){}
   if(DEV)console.debug("[track]",name,props||"");
 }
+/* ---------- visit counter (2026-11-22, owner): anonymous totals in the owner's Sheet ----------
+   Only step names leave the browser. The marker here remembers which steps were counted and when the last visit was
+   active; it is never sent. Not counted: other hosts, files, bots, Global Privacy Control, or after ?dontcount. */
+const COUNT_KEY="design-states-count",NOCOUNT_KEY="design-states-nocount",VISIT_GAP=18e5;
+const COUNT_LIVE=!!CONFIG.countHost&&location.hostname===CONFIG.countHost&&String(CONFIG.feedbackEndpoint).startsWith("https://script.google.com/");
+const COUNT_STEP={phase_open:"map",answer:"used",card_drawn:"card",session_finished:"finished"};
+const COUNT_NEEDS={map:["map"],used:["map","used"],card:["map","used","card"],finished:["map","finished"]};
+{const q=new URLSearchParams(location.search),no=q.has("dontcount"),yes=!no&&q.has("countme");
+  if(no||yes){let saved=true;try{no?localStorage.setItem(NOCOUNT_KEY,"1"):localStorage.removeItem(NOCOUNT_KEY)}catch(e){saved=false}
+    q.delete("dontcount");q.delete("countme");try{history.replaceState(null,"",location.pathname+(q.toString()?"?"+q:"")+location.hash)}catch(e){}
+    setTimeout(()=>say({k:"Visit counter",t:!saved?"Not saved.":no?"This browser isn't counted.":"This browser is counted again.",
+      x:!saved?"This browser blocks storage, so it isn't counted anyway.":no?"Your visits and steps here stay out of the totals.":"Visits and steps from here go into the anonymous totals."}),1200)}}
+function canCount(){
+  if(!COUNT_LIVE||navigator.webdriver||navigator.globalPrivacyControl)return false;
+  const ua=navigator.userAgent;if(/bot\b|crawl|spider|slurp|headless|lighthouse|facebookexternalhit/i.test(ua)&&!/cubot/i.test(ua))return false;
+  try{return localStorage.getItem(NOCOUNT_KEY)!=="1"}catch(e){return false}   /* no storage = no way to count once: not counted */
+}
+function countMark(){let m=null;try{m=JSON.parse(localStorage.getItem(COUNT_KEY))}catch(e){}
+  return m&&Array.isArray(m.seen)?{seen:m.seen,at:Number(m.at)||0}:{seen:[],at:0}}
+function countStep(step){
+  try{
+    if(!canCount())return;
+    const m=countMark(),t=Date.now(),was=m.at,send=[];
+    if(!m.seen.includes("visitor"))send.push("visitor");
+    if(send.length||t-was>VISIT_GAP)send.push("visit");
+    (COUNT_NEEDS[step]||[]).forEach(x=>{if(!m.seen.includes(x))send.push(x)});
+    if(!send.length&&t-was<15000)return;
+    const once=send.filter(x=>x!=="visit");
+    localStorage.setItem(COUNT_KEY,JSON.stringify({seen:m.seen.concat(once),at:t}));   /* marked first, so two quick clicks or tabs count once */
+    if(!send.length)return;
+    fetch(CONFIG.feedbackEndpoint,{method:"POST",keepalive:true,headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({type:"count",events:send})})
+      .then(r=>r.json()).then(j=>{if(j.ok!==true)throw 0})
+      .catch(()=>{try{const n=countMark();localStorage.setItem(COUNT_KEY,JSON.stringify({seen:n.seen.filter(x=>!once.includes(x)),at:send.includes("visit")?0:n.at}))}catch(e){}});   /* didn't arrive: again next time */
+  }catch(e){}
+}
+if(COUNT_LIVE){let t=0;const look=()=>{clearTimeout(t);if(document.visibilityState==="visible")t=setTimeout(()=>countStep(),2500)};   /* a visit = the page really seen */
+  document.addEventListener("visibilitychange",look);look()}
+
 const FB_SEND=()=>!!CONFIG.feedbackEndpoint;
 async function sendFeedback(payload){
   if(!CONFIG.feedbackEndpoint){if(DEV)console.debug("[feedback, not sent — no endpoint]",payload);return false}
@@ -2816,7 +2856,7 @@ $("finForm").addEventListener("submit",e=>{
     if(!ok)setTimeout(()=>say({k:"Feedback",t:"Not sent.",x:"Your session is saved, but the feedback couldn't be sent. You can write to "+CONFIG.contactEmail+" instead."}),700)});   /* after the route, which closes dialogs */
   location.hash="session/"+s.id;
 });
-$("aboutAnalytics").textContent=ANALYTICS_ON?" Anonymous page views and clicks are counted with GoatCounter. No cookies, never your answers.":"";$("aboutAnalytics").hidden=!ANALYTICS_ON;
+$("aboutAnalytics").textContent=ANALYTICS_ON?" Anonymous page views and clicks are counted with GoatCounter. No cookies, never your answers.":COUNT_LIVE?" Visits and steps are counted as anonymous totals, never who you are or what you answer.":"";$("aboutAnalytics").hidden=!(ANALYTICS_ON||COUNT_LIVE);
 let fbUnsent=false;   /* a failed send keeps what was written for the next try */
 $("aboutFeedback").onclick=()=>{if(!fbUnsent)$("fbForm").reset();$("fbDlg").showModal()};
 $("fbForm").addEventListener("submit",async e=>{const f=new FormData(e.target),fb={rating:f.get("rating")?+f.get("rating"):null,comment:(f.get("comment")||"").trim()};
