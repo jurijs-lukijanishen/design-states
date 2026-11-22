@@ -1372,7 +1372,7 @@ const CONFIG={
   homeBgTry:true,          // photo slideshow behind the home page, fading into the page colour toward the bottom. false = plain home.
   analytics:null,          // "goatcounter" (cookieless) | null. Its script is loaded only when this is set.
   goatcounter:"",          // e.g. "https://yourcode.goatcounter.com/count" (GoatCounter → Settings → Site code)
-  feedbackEndpoint:null,   // Tally / Formspree URL that accepts POST JSON {type,rating,named,comment,version}. Until set, feedback UI is hidden.
+  feedbackEndpoint:"https://formspree.io/f/mbgozvve",   // Tally / Formspree URL that accepts POST JSON {type,rating,named,comment,version}. Until set, feedback UI is hidden.
   donateUrl:"https://ko-fi.com/lukijanishen",          // "Buy the author a coffee" link (Ko-fi / Buy Me a Coffee / PayPal.me). Until set, the button only shows in the dev preview.
   contactEmail:"hello@lukijanishen.com",
   version:"4.0-design"
@@ -1380,6 +1380,7 @@ const CONFIG={
 
 if(BUILD.offline)document.documentElement.classList.add("is-offline");
 /* feedback UI only when it can actually be sent; analytics only online, only when configured */
+if(location.protocol==="file:")CONFIG.feedbackEndpoint=null;   /* a file opened from disk can't send (Formspree needs a web origin): no forms there */
 const FB_ON=!!CONFIG.feedbackEndpoint,ANALYTICS_ON=CONFIG.analytics==="goatcounter"&&!!CONFIG.goatcounter&&location.protocol.startsWith("http");
 document.querySelectorAll(".needs-fb").forEach(e=>{e.hidden=!FB_ON;e.querySelectorAll("input[type=checkbox]").forEach(i=>i.checked=FB_ON)});
 /* kit question: shown when its answer can be collected (feedback endpoint or analytics) — and always in the dev preview */
@@ -1429,9 +1430,11 @@ function track(name,props){
   }catch(e){}
   if(DEV)console.debug("[track]",name,props||"");
 }
+const FB_SEND=()=>!!CONFIG.feedbackEndpoint;
 async function sendFeedback(payload){
   if(!CONFIG.feedbackEndpoint){if(DEV)console.debug("[feedback, not sent — no endpoint]",payload);return false}
-  try{const r=await fetch(CONFIG.feedbackEndpoint,{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json"},body:JSON.stringify({_subject:"Design States · "+({session:"session feedback",general:"feedback","kit-interest":"kit interest"}[payload.type]||payload.type),...payload,version:CONFIG.version})});return r.ok}catch(e){return false}
+  const ac=new AbortController();setTimeout(()=>ac.abort(),12000);   /* no answer in 12 s = not sent */
+  try{const r=await fetch(CONFIG.feedbackEndpoint,{method:"POST",signal:ac.signal,headers:{"Content-Type":"application/json",Accept:"application/json"},body:JSON.stringify({_subject:"Design States · "+({session:"session feedback",general:"feedback","kit-interest":"kit interest"}[payload.type]||payload.type),...payload,version:CONFIG.version})});return r.ok}catch(e){return false}
 }
 
 /* ---------- storage: sessions live in this browser only ----------
@@ -2806,14 +2809,17 @@ $("finForm").addEventListener("submit",e=>{
   s.status="finished";s.finishedAt=now();s.feedback=fb;S.current=null;save();
   track("session_finished",{cards:s.cards.length,phases:s.visited.length});
   if(fb.named)track("rated_named",{named:fb.named});if(fb.rating)track("rated",{rating:fb.rating});
-  if(f.get("send")&&(fb.rating||fb.named||fb.comment))sendFeedback({type:"session",...fb});
+  if(FB_SEND()&&f.get("send")&&(fb.rating||fb.named||fb.comment))sendFeedback({type:"session",...fb}).then(ok=>{
+    if(!ok)setTimeout(()=>say({k:"Feedback",t:"Not sent.",x:"Your session is saved, but the feedback couldn't be sent. You can write to "+CONFIG.contactEmail+" instead."}),700)});   /* after the route, which closes dialogs */
   location.hash="session/"+s.id;
 });
 $("aboutAnalytics").textContent=ANALYTICS_ON?" Anonymous page views and clicks are counted with GoatCounter. No cookies, never your answers.":"";$("aboutAnalytics").hidden=!ANALYTICS_ON;
-$("aboutFeedback").onclick=()=>{$("fbForm").reset();$("fbDlg").showModal()};
+let fbUnsent=false;   /* a failed send keeps what was written for the next try */
+$("aboutFeedback").onclick=()=>{if(!fbUnsent)$("fbForm").reset();$("fbDlg").showModal()};
 $("fbForm").addEventListener("submit",async e=>{const f=new FormData(e.target),fb={rating:f.get("rating")?+f.get("rating"):null,comment:(f.get("comment")||"").trim()};
-  if(fb.rating)track("rated",{rating:fb.rating,via:"about"});const ok=await sendFeedback({type:"general",...fb});
-  say({k:"Feedback",t:"Thank you.",x:ok?"Your feedback was sent.":"Feedback isn't connected yet in this build."})});
+  if(!fb.rating&&!fb.comment){e.preventDefault();e.target.querySelector("textarea").focus();return}   /* empty: nothing to send */
+  if(fb.rating)track("rated",{rating:fb.rating,via:"about"});const ok=await sendFeedback({type:"general",...fb});fbUnsent=!ok;
+  say(ok?{k:"Feedback",t:"Thank you.",x:"Your feedback was sent."}:{k:"Feedback",t:"Not sent.",x:"What you wrote is kept: open Leave feedback to try again, or write to "+CONFIG.contactEmail+"."})});
 /* ask(): the site's confirm, resolves true/false; say(): a notice with one OK */
 function ask({k="",t,x="",ok="OK",cancel="Cancel"}){const d=$("askDlg");
   $("askK").textContent=k;$("askT").textContent=t;$("askX").textContent=x;$("askYes").textContent=ok;$("askNo").textContent=cancel;$("askNo").hidden=cancel===null;
@@ -2983,9 +2989,11 @@ function setupSlides(){const root=$("v-about"),sl=[...root.querySelectorAll(".sl
 }
   sl.forEach(x=>x.classList.remove("on"));requestAnimationFrame(()=>{const m=innerHeight/2;sl.forEach(x=>{const r=x.getBoundingClientRect();if(r.top<m&&r.bottom>m)x.classList.add("on")})})}
 /* "would you buy the physical kit?": one answer per browser, sent like feedback + counted as an event */
-document.addEventListener("click",e=>{const b=e.target.closest("[data-kit]");if(!b)return;const f=$("kitQ"),a=b.dataset.kit;
-  try{localStorage.setItem("design-states-kitq",a)}catch(x){}track("kit_interest",{answer:a});sendFeedback({type:"kit-interest",answer:a});
-  f.classList.add("done");f.querySelector(".kq-done").hidden=false});
+let kitBusy=false;   /* "noted" only once it really went; a failed send leaves the buttons for another try */
+document.addEventListener("click",async e=>{const b=e.target.closest("[data-kit]");if(!b||kitBusy)return;const f=$("kitQ"),a=b.dataset.kit,msg=f.querySelector(".kq-done");
+  kitBusy=true;const ok=!FB_SEND()||await sendFeedback({type:"kit-interest",answer:a});kitBusy=false;
+  msg.textContent=ok?"Thank you, noted.":"Not sent. Please try again.";msg.hidden=false;if(!ok)return;
+  try{localStorage.setItem("design-states-kitq",a)}catch(x){}track("kit_interest",{answer:a});f.classList.add("done")});
 function showAbout(){
   cur.preview=null;setView("about","About");updDl();setupSlides();
   {let a=null;try{a=localStorage.getItem("design-states-kitq")}catch(x){}const f=$("kitQ");if(f&&a){f.classList.add("done");f.querySelector(".kq-done").hidden=false}}
