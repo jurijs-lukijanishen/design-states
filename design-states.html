@@ -1141,7 +1141,7 @@ dialog.closing::backdrop{animation:fadeOut .24s cubic-bezier(.4,0,.2,1) forwards
             <button class="btn sm" type="button" id="exportAll">Download all (.json)</button><label class="btn sm" for="importFile">Import (.json)</label><input type="file" id="importFile" accept="application/json,.json" hidden>
             <span class="qwrap"><button class="qh" type="button" id="fileQ" aria-expanded="false" aria-controls="fileTip" aria-label="What is the .json file?">?</button>
               <span class="qtip" id="fileTip" role="note">A .json file is a copy of all your sessions: answers, cards and notes. <b>Download</b> it to keep a backup, or to move your journal to another browser or computer, then <b>Import</b> it there. It isn't meant to be read; to read or print one session, open it and use Print / PDF.</span></span></div>
-          <p class="jpriv mut">Saved only in this browser.<span class="jp needs-fb"> Feedback is optional and has no name attached: only the ratings, comment or kit answer you choose to send reach the author, through&nbsp;Formspree.</span><span class="jp" id="aboutAnalytics"></span> <button class="tbtn red" type="button" id="wipe">Delete all data</button></p>
+          <p class="jpriv mut">Saved only in this browser.<span class="jp needs-fb"> Feedback is optional and has no name attached: only the ratings, comment or kit answer you choose to send reach the author, through&nbsp;Google&nbsp;Sheets.</span><span class="jp" id="aboutAnalytics"></span> <button class="tbtn red" type="button" id="wipe">Delete all data</button></p>
         </div>
       </div>
     </section>
@@ -1370,7 +1370,7 @@ const CONFIG={
   homeBgTry:true,          // photo slideshow behind the home page, fading into the page colour toward the bottom. false = plain home.
   analytics:null,          // "goatcounter" (cookieless) | null. Its script is loaded only when this is set.
   goatcounter:"",          // e.g. "https://yourcode.goatcounter.com/count" (GoatCounter → Settings → Site code)
-  feedbackEndpoint:"https://formspree.io/f/mbgozvve",   // Tally / Formspree URL that accepts POST JSON {type,rating,named,comment,version}. Until set, feedback UI is hidden.
+  feedbackEndpoint:"https://script.google.com/macros/s/AKfycbznW82aQmoGfN5P0thxFDOhMrPrp-F6APbseK9Vz8BCHTKN-NHkbm9kowNg-jlTuiwS2g/exec",   // the owner's Google Sheet collector (collector/Code.gs), or a Formspree URL. null = feedback UI hidden.
   donateUrl:"https://ko-fi.com/lukijanishen",          // "Buy the author a coffee" link (Ko-fi / Buy Me a Coffee / PayPal.me). Until set, the button only shows in the dev preview.
   contactEmail:"hello@lukijanishen.com",
   version:"4.0-design"
@@ -1378,7 +1378,7 @@ const CONFIG={
 
 if(BUILD.offline)document.documentElement.classList.add("is-offline");
 /* feedback UI only when it can actually be sent; analytics only online, only when configured */
-if(location.protocol==="file:")CONFIG.feedbackEndpoint=null;   /* a file opened from disk can't send (Formspree needs a web origin): no forms there */
+if(location.protocol==="file:")CONFIG.feedbackEndpoint=null;   /* a file opened from disk can't send (no web origin to send from): no forms there */
 const FB_ON=!!CONFIG.feedbackEndpoint,ANALYTICS_ON=CONFIG.analytics==="goatcounter"&&!!CONFIG.goatcounter&&location.protocol.startsWith("http");
 document.querySelectorAll(".needs-fb").forEach(e=>{e.hidden=!FB_ON;e.querySelectorAll("input[type=checkbox]").forEach(i=>i.checked=FB_ON)});
 /* kit question: shown when its answer can be collected (feedback endpoint or analytics) — and always in the dev preview */
@@ -1431,8 +1431,13 @@ function track(name,props){
 const FB_SEND=()=>!!CONFIG.feedbackEndpoint;
 async function sendFeedback(payload){
   if(!CONFIG.feedbackEndpoint){if(DEV)console.debug("[feedback, not sent — no endpoint]",payload);return false}
-  const ac=new AbortController();setTimeout(()=>ac.abort(),12000);   /* no answer in 12 s = not sent */
-  try{const r=await fetch(CONFIG.feedbackEndpoint,{method:"POST",signal:ac.signal,headers:{"Content-Type":"application/json",Accept:"application/json"},body:JSON.stringify({_subject:"Design States · "+({session:"session feedback",general:"feedback","kit-interest":"kit interest"}[payload.type]||payload.type),...payload,version:CONFIG.version})});return r.ok}catch(e){return false}
+  /* two kinds of endpoint. Google Apps Script (collector/Code.gs): text/plain, because it can't answer a CORS preflight, it is slower
+     to wake (20 s), and it says 200 even when it refuses, so the body's "ok" decides. Formspree: JSON + Accept (12 s). */
+  const gs=CONFIG.feedbackEndpoint.startsWith("https://script.google.com/");
+  const ac=new AbortController(),to=setTimeout(()=>ac.abort(),gs?20000:12000);   /* no answer = not sent */
+  const data=gs?payload:{_subject:"Design States · "+({session:"session feedback",general:"feedback","kit-interest":"kit interest"}[payload.type]||payload.type),...payload,version:CONFIG.version};
+  try{const r=await fetch(CONFIG.feedbackEndpoint,{method:"POST",signal:ac.signal,headers:gs?{"Content-Type":"text/plain;charset=utf-8"}:{"Content-Type":"application/json",Accept:"application/json"},body:JSON.stringify(data)});
+    return r.ok&&(!gs||(await r.json()).ok===true)}catch(e){return false}finally{clearTimeout(to)}
 }
 
 /* ---------- storage: sessions live in this browser only ----------
@@ -2816,8 +2821,11 @@ let fbUnsent=false;   /* a failed send keeps what was written for the next try *
 $("aboutFeedback").onclick=()=>{if(!fbUnsent)$("fbForm").reset();$("fbDlg").showModal()};
 $("fbForm").addEventListener("submit",async e=>{const f=new FormData(e.target),fb={rating:f.get("rating")?+f.get("rating"):null,comment:(f.get("comment")||"").trim()};
   if(!fb.rating&&!fb.comment){e.preventDefault();e.target.querySelector("textarea").focus();return}   /* empty: nothing to send */
-  if(fb.rating)track("rated",{rating:fb.rating,via:"about"});const ok=await sendFeedback({type:"general",...fb});fbUnsent=!ok;
-  say(ok?{k:"Feedback",t:"Thank you.",x:"Your feedback was sent."}:{k:"Feedback",t:"Not sent.",x:"What you wrote is kept: open Leave feedback to try again, or write to "+CONFIG.contactEmail+"."})});
+  if(fb.rating)track("rated",{rating:fb.rating,via:"about"});
+  fbUnsent=true;say({k:"Feedback",t:"Sending…",x:""});   /* the Sheet answers in 1–3 s: the notice opens at once and then turns into the result */
+  const ok=await sendFeedback({type:"general",...fb});fbUnsent=!ok;
+  const res=ok?{k:"Feedback",t:"Thank you.",x:"Your feedback was sent."}:{k:"Feedback",t:"Not sent.",x:"What you wrote is kept: open Leave feedback to try again, or write to "+CONFIG.contactEmail+"."};
+  if($("askDlg").open&&$("askT").textContent==="Sending…"){$("askT").textContent=res.t;$("askX").textContent=res.x}else say(res)});
 /* ask(): the site's confirm, resolves true/false; say(): a notice with one OK */
 function ask({k="",t,x="",ok="OK",cancel="Cancel"}){const d=$("askDlg");
   $("askK").textContent=k;$("askT").textContent=t;$("askX").textContent=x;$("askYes").textContent=ok;$("askNo").textContent=cancel;$("askNo").hidden=cancel===null;
@@ -2989,7 +2997,8 @@ function setupSlides(){const root=$("v-about"),sl=[...root.querySelectorAll(".sl
 /* "would you buy the physical kit?": one answer per browser, sent like feedback + counted as an event */
 let kitBusy=false;   /* "noted" only once it really went; a failed send leaves the buttons for another try */
 document.addEventListener("click",async e=>{const b=e.target.closest("[data-kit]");if(!b||kitBusy)return;const f=$("kitQ"),a=b.dataset.kit,msg=f.querySelector(".kq-done");
-  kitBusy=true;const ok=!FB_SEND()||await sendFeedback({type:"kit-interest",answer:a});kitBusy=false;
+  kitBusy=true;if(FB_SEND()){msg.textContent="Sending…";msg.hidden=false}
+  const ok=!FB_SEND()||await sendFeedback({type:"kit-interest",answer:a});kitBusy=false;
   msg.textContent=ok?"Thank you, noted.":"Not sent. Please try again.";msg.hidden=false;if(!ok)return;
   try{localStorage.setItem("design-states-kitq",a)}catch(x){}track("kit_interest",{answer:a});f.classList.add("done")});
 function showAbout(){
