@@ -2458,7 +2458,22 @@ function lineTimes(cat,el0){const all=cur.lines.plan,plan=all.filter(o=>o.L.cat=
 const kfAt=(kf,t)=>{if(!kf.length)return 0;if(t<=kf[0][0])return kf[0][1];for(let i=1;i<kf.length;i++)if(t<=kf[i][0]){const[t0,f0]=kf[i-1],[t1,f1]=kf[i];return t1>t0?f0+(f1-f0)*(t-t0)/(t1-t0):f1}return kf.at(-1)[1]};
 const kfReach=(kf,f)=>{for(let i=0;i<kf.length;i++)if(kf[i][1]>=f-1e-6){if(!i)return kf[0][0];const[t0,f0]=kf[i-1],[t1,f1]=kf[i];return f1>f0?t0+(t1-t0)*(f-f0)/(f1-f0):t1}return LINF};
 /* a piece of the network draws as the first of its lines reaches it (null: none of them has started) */
-function pieceTimes(pc,tm){const own=pc.owners.map(w=>({w,kf:tm.get(w.o).kf})).filter(x=>x.kf.length);if(!own.length)return null;
+/* a line that reaches its junction first carries the drawing on along the line it joins (2026-11-23, owner: in Sense-Making ›
+   Form leading meaning Q2's line stopped at its junction and Q1's line continued it later). A line's timing is fixed once it
+   starts, so a line whose plate entered early arrives before the line it joins has started; the joined line's pieces past the
+   junction now draw from that arrival, at the same speed, and the late line simply finds them drawn. */
+const lineBases=new WeakMap();
+function lineBase(o,s0,tm){let B=lineBases.get(tm);
+  if(!B){B=new Map();const lines=[...tm.keys()],cand=o=>B.get(o)||(B.set(o,[]),B.get(o)),eff=(o,s)=>Math.min(LINF,...cand(o).filter(c=>c[0]<=s+1).map(c=>c[1]));
+    lines.forEach(o=>{const R=tm.get(o);if(R.kf.length)cand(o).push([0,R.kf[0][0]])});
+    const shared=cur.lines.net.pieces.filter(pc=>pc.owners.length>1&&pc.owners.some(w=>tm.has(w.o)));
+    for(let it=0;it<4;it++){
+      shared.forEach(pc=>pc.owners.forEach(h=>{if(!tm.has(h.o))return;const tH=eff(h.o,h.s0)+h.s1/LV;if(tH>=LINF)return;
+        pc.owners.forEach(w=>{if(w!==h&&tm.has(w.o))cand(w.o).push([w.s1,tH-w.s1/LV])})}));   /* past this piece, w's line can draw from when h got to its end */
+      lines.forEach(f=>{if(!f.join||!tm.has(f.join.m))return;const tF=eff(f,f.len)+f.len/LV;if(tF<LINF)cand(f.join.m).push([f.join.a,tF-f.join.a/LV])})}   /* a line ending on another */
+    B.eff=eff;lineBases.set(tm,B)}
+  return B.eff(o,s0)}
+function pieceTimes(pc,tm){const own=pc.owners.map(w=>{if(!tm.has(w.o))return null;const b=lineBase(w.o,w.s0,tm);return b<LINF?{w,kf:[[b,0],[b+w.o.len/LV,1]]}:null}).filter(Boolean);if(!own.length)return null;
   const ts=new Set();own.forEach(x=>x.kf.forEach(k=>ts.add(k[0])));const T=[...ts].sort((a,b)=>a-b);for(let t=T[0];t<T.at(-1);t+=.03)ts.add(+t.toFixed(3));
   let mx=0;const out=[...ts].sort((a,b)=>a-b).map(t=>{let f=0;own.forEach(({w,kf})=>{f=Math.max(f,clamp((w.o.len*kfAt(kf,t)-w.s0)/Math.max(.01,w.s1-w.s0),0,1))});mx=Math.max(mx,f);return[t,mx]});
   return mx>0?out:null}
@@ -2750,7 +2765,12 @@ function placeControls(el,p){
   if(right){const tx=el.querySelector(".tx");if(tx){const tb=tx.offsetTop+tx.offsetHeight+4*s;if(tb>y)y=Math.min(tb,R.y+R.h-gh*.25)}}
   const xs=[right?R.x+R.w-gw-pad:R.x+pad,right?R.x+pad:R.x+R.w-gw-pad,right?W-gw-pad:pad];
   const x=xs.find(x=>!nearBadge({x,y,w:gw,h:gh}))??xs[0];
-  g.style.left=clamp(x,0,Math.max(0,W-gw))+"px";g.style.top=y+"px";
+  /* a hovered question's mark grows 1.22 from its top centre: keep that grown mark off the number too, sliding it away from the
+     number just as far as needed (2026-11-23: Sense-Making › Form leading meaning Q4 touched its number on hover) */
+  const mx=Math.max(0,W-gw),grown=x=>({x:x-gw*.11,y,w:gw*1.22,h:gh*1.22});let X=clamp(x,0,mx);
+  if(right&&nearBadge(grown(X))){const B=(el._avoid||[]).reduce((a,b)=>Math.hypot(b.x-X-gw/2,b.y-y)<Math.hypot(a.x-X-gw/2,a.y-y)?b:a),dir=B.x>X+gw/2?-1:1;
+    for(let k=1;k<=60;k++){const nx=clamp(X+dir*k,0,mx);if(!nearBadge(grown(nx))){X=nx;break}}}
+  g.style.left=X+"px";g.style.top=y+"px";
 }
 function updateCat(c){
   const p=cur.phase,s=activeS(),a=s?readAns(s,p,c):[null,null,null,null],e=evaluate(c,a),map=$("map");
