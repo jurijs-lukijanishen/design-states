@@ -473,7 +473,7 @@ html.dark .tabs a[aria-current="page"] img{filter:brightness(0)}   /* dark theme
 
 /* map: the poster, cropped to its content. Lines and points sit ON TOP of the plates */
 #mapHost{position:relative;width:100%;min-width:0}
-#mapHost.sliding{overflow-x:clip}   /* the two maps side by side never make a horizontal scrollbar */
+#mapHost.sliding{overflow:clip}   /* the two maps side by side never make a scrollbar, and the leaving map never makes the page longer (a fast scroll ran past the new map's end, 2026-11-23) */
 #mapHost.sliding>#map{will-change:transform}   /* both maps on their own compositor layers while they slide */
 #map.ghost{contain:layout paint}#map.ghost *{transition:none!important}
 /* phones: the floating "Answer sheet" and "↑" buttons (44px, 20px from the bottom) never cover the last YES/NO */
@@ -1891,21 +1891,28 @@ function mapGhost(){const host=$("mapHost"),map=$("map");if(cur.ghost){cur.ghost
 const SLIDE_T=850,SLIDE_E="cubic-bezier(.3,.7,.2,1)";
 /* where the page will rest once the leaving map is gone: a shorter new map lowers the bottom, and the page used to jump up by the
    difference the moment the slide ended (2026-11-23, owner: flinch when changing phase at the bottom) */
+function hostNatural(){const h=$("mapHost"),m=$("map"),cs=getComputedStyle(h);return m.getBoundingClientRect().top-h.getBoundingClientRect().top+m.offsetHeight+parseFloat(cs.paddingBottom)+parseFloat(cs.borderBottomWidth)}
 function slideRestY(){const h=$("mapHost"),m=$("map");if(!cur.ghost||!m)return scrollY;   /* computed, never by un-holding the layout: Safari clamps the scroll at once */
-  const hr=h.getBoundingClientRect(),cs=getComputedStyle(h),natural=m.getBoundingClientRect().top-hr.top+m.offsetHeight+parseFloat(cs.paddingBottom)+parseFloat(cs.borderBottomWidth);
-  const max=document.documentElement.scrollHeight-hr.height+natural-innerHeight;return Math.max(0,Math.min(scrollY,max))}   /* moves on the first frame (no slow ease-in), settles softly */
+  const max=document.documentElement.scrollHeight-h.getBoundingClientRect().height+hostNatural()-innerHeight;return Math.max(0,Math.min(scrollY,max))}   /* moves on the first frame (no slow ease-in), settles softly */
 /* the slide runs on the compositor (Web Animations on transform only), not on the main thread, so the build and the
    new map's line drawing / plate entries can't hold the motion back (2026-11-20, owner: "5-10 fps") */
 function slideOut(g,d){const host=$("mapHost"),W=host.clientWidth;host.classList.add("sliding");
-  host.style.minHeight=host.offsetHeight+"px";   /* the page keeps its height through the slide (lifting the old map out and building a shorter one each made it jump) */
+  {const slack=document.documentElement.scrollHeight-innerHeight-scrollY;   /* until the new map is built the page ends where the view ends: no jump (lifting the old map out shortened it), and nothing below to scroll into */
+    host.style.minHeight=Math.max(0,host.offsetHeight-Math.max(0,slack))+"px";const m=$("map");if(m&&g&&m!==g)m.style.height="0px"}   /* the emptied map box kept the old height until the new map was built */
   (cur.slideA||[]).forEach(a=>{try{a.cancel()}catch(e){}});cur.slideA=[];cur.slideW=W;
   if(g)cur.slideA.push(g.animate([{transform:"translate3d(0,0,0)"},{transform:`translate3d(${-d*W}px,0,0)`}],{duration:SLIDE_T,easing:SLIDE_E,fill:"both"}));
   cur.slideFps=BUILD.live&&/[?&]fps\b/.test(location.search)?slideFps():null;   /* dev preview only */if(cur.slideFps)cur.slideFps.start(SLIDE_T/1000);
   clearTimeout(cur.slideT);cur.slideT=setTimeout(slideEnd,SLIDE_T+400)}
 function slideIn(d,t0){const map=$("map"),W=cur.slideW||$("mapHost").clientWidth;if(!map.isConnected)return;
-  {const y0=scrollY,y1=slideRestY();if(y0-y1>1){const E=bez(.3,.7,.2,1),t1=performance.now()+16;   /* starts once the new map is built (the build holds the page ~0.2 s; catching up would jump) */   /* glide to the new bottom with the slide */
-    const R=document.documentElement,sb=R.style.scrollBehavior;R.style.scrollBehavior="auto";   /* plain scrollTo(0,y): older Safari rejects behavior:"instant" */
-    const step=now=>{const k=Math.min(1,(now-t1)/SLIDE_T);try{scrollTo(0,y0+(y1-y0)*E(k))}catch(e){}if(k<1)requestAnimationFrame(step);else R.style.scrollBehavior=sb};requestAnimationFrame(step)}}
+  /* the page is only as long as the new map, plus what the glide down to its end still needs (shrinking with it), so a fast scroll
+     during the slide can't run past the new map's end and snap back (2026-11-23, owner) */
+  {const host=$("mapHost"),nat=hostNatural(),y0=scrollY,y1=slideRestY();
+    if(y0-y1>1){const E=bez(.3,.7,.2,1),t1=performance.now()+16;   /* starts once the new map is built (the build holds the page ~0.2 s; catching up would jump) */
+      host.style.minHeight=nat+(y0-y1)+"px";
+      const R=document.documentElement,sb=R.style.scrollBehavior;R.style.scrollBehavior="auto";   /* plain scrollTo(0,y): older Safari rejects behavior:"instant" */
+      const step=now=>{const k=Math.min(1,(now-t1)/SLIDE_T),y=y0+(y1-y0)*E(k);try{scrollTo(0,y)}catch(e){}host.style.minHeight=k<1?nat+(y-y1)+"px":"";
+        if(k<1)requestAnimationFrame(step);else R.style.scrollBehavior=sb};requestAnimationFrame(step)}
+    else host.style.minHeight=""}
   const a=map.animate([{transform:`translate3d(${d*W}px,0,0)`},{transform:"translate3d(0,0,0)"}],{duration:SLIDE_T,easing:SLIDE_E,fill:"both"});
   a.currentTime=Math.min(SLIDE_T,performance.now()-t0);cur.slideA.push(a);a.finished.then(()=>{a.cancel()},()=>{});
   clearTimeout(cur.slideT);cur.slideT=setTimeout(slideEnd,Math.max(0,SLIDE_T-(performance.now()-t0))+150)}
